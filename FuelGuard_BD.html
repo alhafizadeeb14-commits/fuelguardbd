@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FuelGuard BD</title>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--text:#f1f5f9;--mute:#94a3b8;--acc:#f97316;--good:#22c55e;--mid:#eab308;--bad:#ef4444}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);padding:16px;max-width:480px;margin:auto}
+  h1{font-size:22px;margin:8px 0 2px}
+  h1 span{color:var(--acc)}
+  .status{font-size:14px;color:var(--mute);display:flex;align-items:center;gap:8px;margin-bottom:16px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--bad)}
+  .dot.on{background:var(--good)}
+  .card{background:var(--card);border-radius:16px;padding:18px;margin-bottom:12px}
+  .label{font-size:13px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}
+  .value{font-size:40px;font-weight:700;margin-top:4px}
+  .value small{font-size:18px;color:var(--mute);font-weight:400}
+  button{width:100%;padding:14px;border:0;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;margin-top:4px}
+  #connect{background:var(--acc);color:#fff}
+  #reset{background:var(--card);color:var(--text);border:1px solid #334155}
+  input{width:100%;padding:12px;border-radius:10px;border:1px solid #334155;background:var(--bg);color:var(--text);font-size:16px;margin-top:6px}
+  .note{font-size:12px;color:var(--mute);margin-top:12px;line-height:1.5}
+</style>
+</head>
+<body>
+  <h1>FUEL<span>GUARD</span> BD</h1>
+  <div class="status"><div class="dot" id="dot"></div><span id="status">Disconnected</span></div>
+
+  <div class="card"><div class="label">Fuel quantity</div>
+    <div class="value"><span id="liters">0.00</span> <small>L</small></div></div>
+
+  <div class="card"><div class="label">Estimated quality</div>
+    <div class="value" id="quality">--</div></div>
+
+  <div class="card"><div class="label">Total price</div>
+    <div class="value">৳<span id="price">0.00</span></div>
+    <div class="label" style="margin-top:14px">Price per liter (৳)</div>
+    <input id="rate" type="number" inputmode="decimal" step="0.01" value="120"></div>
+
+  <button id="connect">Connect Bluetooth</button>
+  <button id="reset" disabled>Reset quantity</button>
+
+  <p class="note">Quality is an estimate from a moisture sensor, not a certified test. Use Android Chrome. Page must be opened over HTTPS (or localhost).</p>
+
+<script>
+const SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR    = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const $ = id => document.getElementById(id);
+let device, characteristic, liters = 0;
+
+try { const r = localStorage.getItem("fgRate"); if (r) $("rate").value = r; } catch(e){}
+
+function setStatus(on, text){
+  $("dot").classList.toggle("on", on);
+  $("status").textContent = text;
+  $("connect").textContent = on ? "Disconnect" : "Connect Bluetooth";
+  $("reset").disabled = !on;
+}
+function updatePrice(){
+  const rate = parseFloat($("rate").value) || 0;
+  $("price").textContent = (liters * rate).toFixed(2);
+  try { localStorage.setItem("fgRate", $("rate").value); } catch(e){}
+}
+$("rate").addEventListener("input", updatePrice);
+
+function onData(e){
+  const txt = new TextDecoder().decode(e.target.value);
+  const [l, q] = txt.split(",");
+  liters = parseFloat(l) || 0;
+  $("liters").textContent = liters.toFixed(2);
+  const el = $("quality");
+  el.textContent = q || "--";
+  el.style.color = q === "Good" ? "var(--good)" : q === "Moderate" ? "var(--mid)" : q === "Poor" ? "var(--bad)" : "";
+  updatePrice();
+}
+
+async function connect(){
+  if (!navigator.bluetooth){ alert("Web Bluetooth not supported. Use Android Chrome over HTTPS."); return; }
+  try{
+    setStatus(false, "Searching...");
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE] }, { namePrefix: "FuelGuard" }],
+      optionalServices: [SERVICE]
+    });
+    device.addEventListener("gattserverdisconnected", () => setStatus(false, "Disconnected"));
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE);
+    characteristic = await service.getCharacteristic(CHAR);
+    await characteristic.startNotifications();
+    characteristic.addEventListener("characteristicvaluechanged", onData);
+    setStatus(true, "Connected: " + (device.name || "FuelGuard BD"));
+  }catch(err){
+    setStatus(false, "Disconnected");
+    if (err.name !== "NotFoundError") alert("Connection failed: " + err.message);
+  }
+}
+
+$("connect").addEventListener("click", () => {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  else connect();
+});
+$("reset").addEventListener("click", async () => {
+  if (characteristic) await characteristic.writeValue(new TextEncoder().encode("R"));
+});
+</script>
+</body>
+</html>
